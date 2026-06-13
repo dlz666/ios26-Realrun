@@ -3,59 +3,28 @@ run.py
 automatically run the route
 """
 
-"""修正坐标误差，百度取点使用 BD-09 坐标系，iOS使用 WGS-09 坐标系，进行转换"""
+"""坐标修正：路线点的坐标系由 config.yaml 的 coordSystem 指定
+(wgs84/gcj02/bd09)，统一转换成 iOS 需要的 WGS-84"""
 import math
 import time
 import random
+import asyncio
 
 from geopy.distance import geodesic
 
 from driver import location
+from util import coord
 
-def bd09Towgs84(position):
-    wgs_p = {}
+# set by the SIGINT handler so the running loop can stop gracefully and
+# still clear the simulated location before exiting
+_stop = False
 
-    x_pi = 3.14159265358979324 * 3000.0 / 180.0
-    pi = 3.141592653589793238462643383  # π
-    a = 6378245.0  # 长半轴
-    ee = 0.00669342162296594323  # 偏心率平方
+def request_stop():
+    global _stop
+    _stop = True
 
-    def transform_lat(x, y):
-        ret = -100.0 + 2.0 * x + 3.0 * y + 0.2 * y * y + 0.1 * x * y + 0.2 * math.sqrt(abs(x))
-        ret += (20.0 * math.sin(6.0 * x * pi) + 20.0 * math.sin(2.0 * x * pi)) * 2.0 / 3.0
-        ret += (20.0 * math.sin(y * pi) + 40.0 * math.sin(y / 3.0 * pi)) * 2.0 / 3.0
-        ret += (160.0 * math.sin(y / 12.0 * pi) + 320 * math.sin(y * pi / 30.0)) * 2.0 / 3.0
-        return ret
-
-    def transform_lon(x, y):
-        ret = 300.0 + x + 2.0 * y + 0.1 * x * x + 0.1 * x * y + 0.1 * math.sqrt(abs(x))
-        ret += (20.0 * math.sin(6.0 * x * pi) + 20.0 * math.sin(2.0 * x * pi)) * 2.0 / 3.0
-        ret += (20.0 * math.sin(x * pi) + 40.0 * math.sin(x / 3.0 * pi)) * 2.0 / 3.0
-        ret += (150.0 * math.sin(x / 12.0 * pi) + 300.0 * math.sin(x / 30.0 * pi)) * 2.0 / 3.0
-        return ret
-
-    x = position['lng'] - 0.0065
-    y = position['lat'] - 0.006
-    z = math.sqrt(x * x + y * y) - 0.00002 * math.sin(y * x_pi)
-    theta = math.atan2(y, x) - 0.000003 * math.cos(x * x_pi)
-
-    gcj_lng = z * math.cos(theta)
-    gcj_lat = z * math.sin(theta)
-
-    d_lat = transform_lat(gcj_lng - 105.0, gcj_lat - 35.0)
-    d_lng = transform_lon(gcj_lng - 105.0, gcj_lat - 35.0)
-
-    rad_lat = gcj_lat / 180.0 * pi
-    magic = math.sin(rad_lat)
-    magic = 1 - ee * magic * magic
-    sqrt_magic = math.sqrt(magic)
-
-    d_lng = (d_lng * 180.0) / (a / sqrt_magic * math.cos(rad_lat) * pi)
-    d_lat = (d_lat * 180.0) / (a * (1 - ee) / (magic * sqrt_magic) * pi)
-
-    wgs_p["lat"] = gcj_lat * 2 - gcj_lat - d_lat
-    wgs_p["lng"] = gcj_lng * 2 - gcj_lng - d_lng
-    return wgs_p
+def should_stop():
+    return _stop
 
 # get the ditance according to the latitude and longitude
 def geodistance(p1, p2):
@@ -134,22 +103,34 @@ def fixLockT(loc: list, v, dt):
             t += dt
     return fixedLoc
 
-def run1(dvt, loc: list, v, dt=0.2):
+async def run1(dvt, loc: list, v, coord_system, dt=0.2):
     fixedLoc = fixLockT(loc, v, dt)
     nList = (5, 6, 7, 8, 9)
     n = nList[random.randint(0, len(nList)-1)]
     fixedLoc = randLoc(fixedLoc, n=n)  # a path will be divided into n parts for random route
-    clock = time.time()
+    clock = time.monotonic()
     for i in fixedLoc:
-        # utils.setLoc(bd09Towgs84(i))
-        location.set_location(dvt, **bd09Towgs84(i))
-        while time.time()-clock < dt:
-            pass
-        clock = time.time()
+        if _stop:
+            return
+        lng, lat = coord.to_wgs84(i["lng"], i["lat"], coord_system)
+        await location.set_location(dvt, lat=lat, lng=lng)
+        delay = dt - (time.monotonic() - clock)
+        if delay > 0:
+            await asyncio.sleep(delay)
+        clock = time.monotonic()
 
-def run(dvt, loc: list, v, d=15):
+async def run(dvt, loc: list, v, laps, coord_system, d=15):
+    """Run the route `laps` times (set laps <= 0 to loop forever)."""
     random.seed(time.time())
-    while True:
+    lap = 0
+    while not _stop and (laps <= 0 or lap < laps):
         vRand = 1000/(1000/v-(2*random.random()-1)*d)
-        run1(dvt, loc, vRand)
-        print("跑完一圈了")
+        await run1(dvt, loc, vRand, coord_system)
+        lap += 1
+        if not _stop:
+            if laps > 0:
+                print(f"跑完第 {lap}/{laps} 圈")
+            else:
+                print("跑完一圈了")
+    if not _stop and laps > 0:
+        print(f"已完成全部 {laps} 圈")

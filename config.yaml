@@ -1,4 +1,6 @@
 v: 3.3
-routeConfig: "HNroute.txt"
+routeConfig: "zju_route.txt"
+coordSystem: "wgs84"   # 路线点坐标系：wgs84(卫星图) / gcj02(普通地图,中国大陆常用) / bd09(百度)
+laps: 8                # 跑的圈数；设为 0 则无限循环
 libimobiledeviceDir: "libimobiledevice"
 imageDir: "DeveloperDiskImage"

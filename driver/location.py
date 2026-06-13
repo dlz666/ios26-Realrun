@@ -1,7 +1,5 @@
-from pymobiledevice3.cli.developer import LocationSimulation
+async def set_location(loc_sim, lat: float, lng: float):
+    await loc_sim.set(lat, lng)
 
-def set_location(dvt, lat: float, lng: float):
-    LocationSimulation(dvt).set(lat, lng)
-
-def clear_location(dvt):
-    LocationSimulation(dvt).clear()
+async def clear_location(loc_sim):
+    await loc_sim.clear()

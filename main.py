@@ -1,12 +1,14 @@
 import signal
+import asyncio
 import logging
 import coloredlogs
 import os
+from contextlib import suppress
 
 from driver import location
 
-from pymobiledevice3.cli.remote import RemoteServiceDiscoveryService
-from pymobiledevice3.cli.developer import DvtSecureSocketProxyService
+from pymobiledevice3.services.dvt.instruments.dvt_provider import DvtProvider
+from pymobiledevice3.services.dvt.instruments.location_simulation import LocationSimulation
 
 from init import init
 from init import tunnel
@@ -33,61 +35,54 @@ logging.getLogger('blib2to3.pgen2.driver').setLevel(logging.DEBUG if debug else 
 logging.getLogger('urllib3.connectionpool').setLevel(logging.DEBUG if debug else logging.WARNING)
 
 
+logger = logging.getLogger(__name__)
 
-def main():
+
+async def amain():
     # set level
-    logger = logging.getLogger(__name__)
     coloredlogs.install(level=logging.INFO)
     logger.setLevel(logging.INFO)
     if debug:
         logger.setLevel(logging.DEBUG)
         coloredlogs.install(level=logging.DEBUG)
 
-    init.init()
+    await init.init()
     logger.info("init done")
 
-    # start the tunnel in another process
+    # get route
+    loc = route.get_route()
+    logger.info(f"got route from {config.config.routeConfig}")
+
+    # start the tunnel and connect to the device's RemoteServiceDiscovery
     logger.info("starting tunnel")
-    original_sigint_handler = signal.signal(signal.SIGINT, signal.SIG_IGN)
-    process, address, port = tunnel.tunnel()
-    signal.signal(signal.SIGINT, original_sigint_handler)
-    logger.info("tunnel started")
-    try:
-        logger.debug(f"tunnel address: {address}, port: {port}")
-
-        # get route
-        loc = route.get_route()
-        logger.info(f"got route from {config.config.routeConfig}")
-
-
-        with RemoteServiceDiscoveryService((address, port)) as rsd:
-            with DvtSecureSocketProxyService(rsd) as dvt:
-                try:
-                    print(f"已开始模拟跑步，速度大约为 {config.config.v} m/s")
+    async with tunnel.start_rsd() as rsd:
+        logger.info("tunnel started")
+        async with DvtProvider(rsd) as dvt:
+            loc_sim = LocationSimulation(dvt)
+            await loc_sim.connect()
+            laps = getattr(config.config, "laps", 0)
+            coord_system = getattr(config.config, "coordSystem", "wgs84")
+            try:
+                print(f"已开始模拟跑步，速度大约为 {config.config.v} m/s，坐标系 {coord_system}")
+                if laps > 0:
+                    print(f"将跑 {laps} 圈后自动停止，中途可按 Ctrl+C 退出")
+                else:
                     print("会无限循环，按 Ctrl+C 退出")
-                    print("请勿直接关闭窗口，否则无法还原正常定位")
-                    run.run(dvt, loc, config.config.v)
-                except KeyboardInterrupt:
-                    logger.debug("get KeyboardInterrupt (inner)")
-                    logger.debug(f"Is process alive? {process.is_alive()}")
-                finally:
-                    logger.debug(f"Is process alive? {process.is_alive()}")
-                    logger.debug("Start to clear location")
-                    location.clear_location(dvt)
-                    logger.info("Location cleared")
+                print("请勿直接关闭窗口，否则无法还原正常定位")
+                await run.run(loc_sim, loc, config.config.v, laps, coord_system)
+            finally:
+                logger.debug("Start to clear location")
+                with suppress(Exception):
+                    await location.clear_location(loc_sim)
+                logger.info("Location cleared")
+    print("Bye")
 
 
-    except KeyboardInterrupt:
-        logger.debug("get KeyboardInterrupt (outer)")
-    finally:
-        # stop the tunnel process
-        logger.debug(f"Is process alive? {process.is_alive()}")
-        logger.debug("terminating tunnel process")
-        process.terminate()
-        logger.info("tunnel process terminated")
-        print("Bye")
-    
+def main():
+    # turn Ctrl+C into a graceful stop so the location can be restored
+    signal.signal(signal.SIGINT, lambda signum, frame: run.request_stop())
+    asyncio.run(amain())
 
-    
+
 if __name__ == "__main__":
     main()
