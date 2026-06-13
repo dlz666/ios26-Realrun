@@ -39,16 +39,22 @@ pip install -r requirements.txt
 
 ## 二、画一条跑步路线
 
-1. 打开 [Google My Maps](https://www.google.com/maps/d/)（或任何能导出 KML 的地图工具）
-2. 用「画线」工具沿你想跑的路线点一圈（**首尾大致闭合**）
-3. 导出为 **KML** 文件
-4. 转换成项目可用的路线文件：
+用 **[Google Earth 网页版](https://earth.google.com/web)** 在卫星图上画线最方便：
+
+1. 打开 https://earth.google.com/web
+2. 左侧 **「项目」→ 新建 → 创建 KML 文件 / 新建本地项目**
+3. 顶部工具栏点 **「绘制线条或形状」**（折线图标 ✏️）
+4. 沿你想跑的路线**依次点击**绕一圈（**首尾大致闭合**），最后**双击**结束
+5. 在左侧那条路径右边 **「⋮」→「导出为 KML 文件」**，保存 `.kml`
+
+然后转换成项目可用的路线文件：
 
 ```bash
-python kml_to_route.py 你的地图.kml zju_route.txt
+python kml_to_route.py 你下载的.kml zju_route.txt
 ```
 
 > 看到 `converted N points -> zju_route.txt` 就成功了。
+> 因为是在**卫星图**上画的，坐标就是真实 WGS-84，下一步 `coordSystem` 保持 `wgs84` 即可。
 
 ---
 
